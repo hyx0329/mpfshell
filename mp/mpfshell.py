@@ -30,6 +30,7 @@ import os
 import platform
 import sys
 import tempfile
+from collections import defaultdict
 
 import colorama
 import serial
@@ -58,13 +59,27 @@ class MpFileShell(cmd.Cmd):
         self.caching = caching
         self.reset = reset
         self.repeat_on_emptyline = False
+        self.format_prompt = "\nlocal [{lpwd}]\nmpfs({target})[{pwd}]> "
+        self.format_colored_prompt = (
+            # local working directory
+            colorama.Fore.CYAN + "local ["
+            + colorama.Fore.YELLOW + "{lpwd}"
+            + colorama.Fore.CYAN + "]\n"
+            # mpy working directory
+            + colorama.Fore.BLUE + "mpfs ("
+            + colorama.Fore.MAGENTA + "{target}"
+            + colorama.Fore.BLUE + ") ["
+            + colorama.Fore.YELLOW + "{pwd}"
+            + colorama.Fore.BLUE + "]> "
+            + colorama.Fore.RESET
+        )
+        self.prompt_config = defaultdict(lambda: "N/A")
 
         self.fe = None
         self.repl = None
         self.tokenizer = Tokenizer()
 
         self.__intro()
-        self.__set_prompt_path()
 
     def __del__(self):
         self.__disconnect()
@@ -90,25 +105,34 @@ class MpFileShell(cmd.Cmd):
             serial.VERSION,
         )
 
-    def __set_prompt_path(self):
+    def __color_wrap(self, string, color=colorama.Fore.RESET):
+        if self.color:
+            return color + string + colorama.Fore.RESET
+        return string
+
+    def __update_prompt(self, **kwargs):
 
         if self.fe is not None:
-            pwd = self.fe.pwd()
+            self.prompt_config["pwd"] = self.fe.pwd()
+            self.prompt_config["target"] = self.fe.sysname
+            self.prompt_config["port"] = self.fe.con
         else:
-            pwd = "/"
+            self.prompt_config["pwd"] = "N/A"
+            self.prompt_config["target"] = "disconected"
+            self.prompt_config["port"] = "N/A"
+
+        try:
+            self.prompt_config["lpwd"] = os.getcwd()
+        except FileNotFoundError:
+            self.prompt_config["lpwd"] = self.__color_wrap("Current working directory disappeared!", color=colorama.Fore.RED)
+
+        for k, v in zip(kwargs.keys(), kwargs.values()):
+            self.prompt_config[k] = v
 
         if self.color:
-            self.prompt = (
-                colorama.Fore.BLUE
-                + "mpfs ["
-                + colorama.Fore.YELLOW
-                + pwd
-                + colorama.Fore.BLUE
-                + "]> "
-                + colorama.Fore.RESET
-            )
+            self.prompt = self.format_colored_prompt.format(**self.prompt_config)
         else:
-            self.prompt = "mpfs [" + pwd + "]> "
+            self.prompt = self.format_prompt.format(**self.prompt_config)
 
     def __error(self, msg):
 
@@ -129,7 +153,6 @@ class MpFileShell(cmd.Cmd):
             else:
                 self.fe = MpFileExplorer(port, self.reset)
             print("Connected to %s" % self.fe.sysname)
-            self.__set_prompt_path()
             return True
         except PyboardError as e:
             logging.error(e)
@@ -148,7 +171,6 @@ class MpFileShell(cmd.Cmd):
             try:
                 self.fe.close()
                 self.fe = None
-                self.__set_prompt_path()
             except RemoteIOError as e:
                 self.__error(str(e))
 
@@ -171,10 +193,15 @@ class MpFileShell(cmd.Cmd):
 
         return None
 
+    def preloop(self):
+        self.__update_prompt()
+
     def postcmd(self, stop, line):
         # keep the shell open until manually exited
         if line.startswith("exit") or line.startswith("EOF"):
             return True
+        self.prompt_config["ret_status"] = stop
+        self.__update_prompt()
         return False
 
     def emptyline(self):
@@ -317,7 +344,6 @@ class MpFileShell(cmd.Cmd):
                     return
 
                 self.fe.cd(s_args[0])
-                self.__set_prompt_path()
             except IOError as e:
                 self.__error(str(e))
 
@@ -680,8 +706,6 @@ class MpFileShell(cmd.Cmd):
             except RemoteIOError as e:
                 # Working directory does not exist anymore
                 self.__error(str(e))
-            finally:
-                self.__set_prompt_path()
             print("")
 
     def do_mpyc(self, args):
