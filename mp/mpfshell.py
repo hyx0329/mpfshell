@@ -183,11 +183,15 @@ class MpFileShell(cmd.Cmd):
         # do nothing and keeps the shell open
         return 0
 
+    def default(self, line):
+        self.stdout.write("*** Unknown syntax: %s\n*** Type \"help\" for available commands.\n" % line)
+
     def do_exit(self, args):
         """exit
         Exit this shell.
         """
         self.__disconnect()
+        print("\nbye~\n")
 
         return True
 
