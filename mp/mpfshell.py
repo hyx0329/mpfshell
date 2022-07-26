@@ -31,6 +31,7 @@ import platform
 import sys
 import tempfile
 from collections import defaultdict
+from functools import wraps
 
 import colorama
 import serial
@@ -193,6 +194,21 @@ class MpFileShell(cmd.Cmd):
 
         return None
 
+    def __unexpected_disconnection_handler(func):
+        from mp.pyboard import PyboardError
+        from serial.serialutil import SerialException
+        @wraps(func)
+        def handle_pyboard_disconnect_error(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except (SerialException, PyboardError) as e:
+                if "disconnect" not in str(e) and not isinstance(e, SerialException):
+                    raise e
+                self.__error("Device possibly disconnected, resetting connection now!")
+                self.__disconnect()
+
+        return handle_pyboard_disconnect_error
+
     def preloop(self):
         self.__update_prompt()
 
@@ -282,6 +298,7 @@ class MpFileShell(cmd.Cmd):
         choices = ['on', 'off']
         return [i for i in choices if i.startswith(args[0])]
 
+    @__unexpected_disconnection_handler
     def do_ls(self, args):
         """ls
         List remote files.
@@ -321,6 +338,7 @@ class MpFileShell(cmd.Cmd):
             except IOError as e:
                 self.__error(str(e))
 
+    @__unexpected_disconnection_handler
     def do_pwd(self, args):
         """pwd
         Print current remote directory.
@@ -328,6 +346,7 @@ class MpFileShell(cmd.Cmd):
         if self.__is_open():
             print(self.fe.pwd())
 
+    @__unexpected_disconnection_handler
     def do_cd(self, args):
         """cd <TARGET DIR>
         Change current remote directory to given target.
@@ -356,6 +375,7 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
+    @__unexpected_disconnection_handler
     def do_md(self, args):
         """md <TARGET DIR>
         Create new remote directory.
@@ -431,6 +451,7 @@ class MpFileShell(cmd.Cmd):
 
         print(os.getcwd())
 
+    @__unexpected_disconnection_handler
     def do_put(self, args):
         """put <LOCAL FILE> [<REMOTE FILE>]
         Upload local file. If the second parameter is given,
@@ -468,6 +489,7 @@ class MpFileShell(cmd.Cmd):
         files = [o for o in os.listdir(".") if os.path.isfile(os.path.join(".", o))]
         return [i for i in files if i.startswith(args[0])]
 
+    @__unexpected_disconnection_handler
     def do_mput(self, args):
         """mput <SELECTION REGEX>
         Upload all local files that match the given regular expression.
@@ -486,6 +508,7 @@ class MpFileShell(cmd.Cmd):
             except IOError as e:
                 self.__error(str(e))
 
+    @__unexpected_disconnection_handler
     def do_get(self, args):
         """get <REMOTE FILE> [<LOCAL FILE>]
         Download remote file. If the second parameter is given,
@@ -519,6 +542,7 @@ class MpFileShell(cmd.Cmd):
             except IOError as e:
                 self.__error(str(e))
 
+    @__unexpected_disconnection_handler
     def do_mget(self, args):
         """mget <SELECTION REGEX>
         Download all remote files that match the given regular expression.
@@ -546,6 +570,7 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
+    @__unexpected_disconnection_handler
     def do_rm(self, args):
         """rm <REMOTE FILE or DIR>
         Delete a remote file or directory.
@@ -571,6 +596,7 @@ class MpFileShell(cmd.Cmd):
             except PyboardError:
                 self.__error("Unable to send request to %s" % self.fe.sysname)
 
+    @__unexpected_disconnection_handler
     def do_mrm(self, args):
         """mrm <SELECTION REGEX>
         Delete all remote files that match the given regular expression.
@@ -597,6 +623,7 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
+    @__unexpected_disconnection_handler
     def do_cat(self, args):
         """cat <REMOTE FILE>
         Print the contents of a remote file.
@@ -620,6 +647,7 @@ class MpFileShell(cmd.Cmd):
 
     complete_cat = complete_get
 
+    @__unexpected_disconnection_handler
     def do_exec(self, args):
         """exec <STATEMENT>
         Execute a Python statement on remote.
@@ -645,6 +673,7 @@ class MpFileShell(cmd.Cmd):
             except PyboardError as e:
                 self.__error(str(e))
 
+    @__unexpected_disconnection_handler
     def do_repl(self, args):
         """repl
         Enter Micropython REPL.
