@@ -57,6 +57,7 @@ class MpFileShell(cmd.Cmd):
         self.color = color
         self.caching = caching
         self.reset = reset
+        self.repeat_on_emptyline = False
 
         self.fe = None
         self.repl = None
@@ -176,6 +177,12 @@ class MpFileShell(cmd.Cmd):
             return True
         return False
 
+    def emptyline(self):
+        if self.repeat_on_emptyline and self.lastcmd:
+            return self.onecmd(self.lastcmd)
+        # do nothing and keeps the shell open
+        return 0
+
     def do_exit(self, args):
         """exit
         Exit this shell.
@@ -223,6 +230,26 @@ class MpFileShell(cmd.Cmd):
         """
 
         self.__disconnect()
+
+    def do_repeat(self, args):
+        """repeat <on/off>
+        Switch whether to repeat the last command when empty line encountered.
+        Default off. Use without argument to get current status.
+        """
+        if len(args):
+            first_arg = args.split()[0]
+            if first_arg == "on":
+                self.repeat_on_emptyline = True
+            elif first_arg == "off":
+                self.repeat_on_emptyline = False
+            else:
+                self.stdout.write("Unrecognized option: %s\n" % args)
+        self.stdout.write("Repeat: %s\n" % ("on" if self.repeat_on_emptyline else "off"))
+        return 0
+
+    def complete_repeat(self, *args):
+        choices = ['on', 'off']
+        return [i for i in choices if i.startswith(args[0])]
 
     def do_ls(self, args):
         """ls
