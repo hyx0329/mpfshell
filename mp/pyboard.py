@@ -141,6 +141,9 @@ class Pyboard:
         self.exec_raw_no_follow(command)
         return self.follow(timeout, data_consumer)
 
+    def exec_abort(self):
+        self.con.write(b"\r\x03\x03")
+
     def eval(self, expression):
         ret = self.exec_("print({})".format(expression))
         ret = ret.strip()

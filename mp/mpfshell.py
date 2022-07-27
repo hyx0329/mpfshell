@@ -178,7 +178,6 @@ class MpFileShell(cmd.Cmd):
     def __is_open(self):
 
         if self.fe is None:
-            self.__error("Not connected to device. Use 'open' first.")
             return False
 
         return True
@@ -194,11 +193,19 @@ class MpFileShell(cmd.Cmd):
 
         return None
 
-    def __unexpected_disconnection_handler(func):
+    def __connection_guard(func):
+        """__connection_guard
+        This is a decorator for any option requires the connection to the device.
+        It can handle unexpected physical disconnection."""
         from mp.pyboard import PyboardError
         from serial.serialutil import SerialException
         @wraps(func)
-        def handle_pyboard_disconnect_error(self, *args, **kwargs):
+        def connection_guard(self, *args, **kwargs):
+            # check connection
+            if not self.__is_open():
+                self.__error("Not connected to device. Use 'open' first.")
+                return
+            # handle unexpected disconnection
             try:
                 return func(self, *args, **kwargs)
             except (SerialException, PyboardError) as e:
@@ -207,7 +214,7 @@ class MpFileShell(cmd.Cmd):
                 self.__error("Device possibly disconnected, resetting connection now!")
                 self.__disconnect()
 
-        return handle_pyboard_disconnect_error
+        return connection_guard
 
     def preloop(self):
         self.__update_prompt()
@@ -298,73 +305,72 @@ class MpFileShell(cmd.Cmd):
         choices = ['on', 'off']
         return [i for i in choices if i.startswith(args[0])]
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_ls(self, args):
         """ls
         List remote files.
         """
 
-        if self.__is_open():
-            try:
-                files = self.fe.ls(add_details=True)
+        try:
+            files = self.fe.ls(add_details=True)
 
-                if self.fe.pwd() != "/":
-                    files = [("..", "D")] + files
+            if self.fe.pwd() != "/":
+                files = [("..", "D")] + files
 
-                print("\nRemote files in '%s':\n" % self.fe.pwd())
+            print("\nRemote files in '%s':\n" % self.fe.pwd())
 
-                for elem, type in files:
-                    if type == "F":
-                        if self.color:
-                            print(
-                                colorama.Fore.CYAN
-                                + ("       %s" % elem)
-                                + colorama.Fore.RESET
-                            )
-                        else:
-                            print("       %s" % elem)
+            for elem, type in files:
+                if type == "F":
+                    if self.color:
+                        print(
+                            colorama.Fore.CYAN
+                            + ("       %s" % elem)
+                            + colorama.Fore.RESET
+                        )
                     else:
-                        if self.color:
-                            print(
-                                colorama.Fore.MAGENTA
-                                + (" <dir> %s" % elem)
-                                + colorama.Fore.RESET
-                            )
-                        else:
-                            print(" <dir> %s" % elem)
+                        print("       %s" % elem)
+                else:
+                    if self.color:
+                        print(
+                            colorama.Fore.MAGENTA
+                            + (" <dir> %s" % elem)
+                            + colorama.Fore.RESET
+                        )
+                    else:
+                        print(" <dir> %s" % elem)
 
-                print("")
+            print("")
 
-            except IOError as e:
+        except IOError as e:
                 self.__error(str(e))
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_pwd(self, args):
         """pwd
         Print current remote directory.
         """
-        if self.__is_open():
-            print(self.fe.pwd())
+        print(self.fe.pwd())
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_cd(self, args):
         """cd <TARGET DIR>
         Change current remote directory to given target.
         """
         if not len(args):
             self.__error("Missing argument: <REMOTE DIR>")
-        elif self.__is_open():
-            try:
-                s_args = self.__parse_file_names(args)
-                if not s_args:
-                    return
-                elif len(s_args) > 1:
-                    self.__error("Only one argument allowed: <REMOTE DIR>")
-                    return
+            return
 
-                self.fe.cd(s_args[0])
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            s_args = self.__parse_file_names(args)
+            if not s_args:
+                return
+            elif len(s_args) > 1:
+                self.__error("Only one argument allowed: <REMOTE DIR>")
+                return
+
+            self.fe.cd(s_args[0])
+        except IOError as e:
+            self.__error(str(e))
 
     def complete_cd(self, *args):
 
@@ -375,25 +381,26 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_md(self, args):
         """md <TARGET DIR>
         Create new remote directory.
         """
         if not len(args):
             self.__error("Missing argument: <REMOTE DIR>")
-        elif self.__is_open():
-            try:
-                s_args = self.__parse_file_names(args)
-                if not s_args:
-                    return
-                elif len(s_args) > 1:
-                    self.__error("Only one argument allowed: <REMOTE DIR>")
-                    return
+            return
 
-                self.fe.md(s_args[0])
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            s_args = self.__parse_file_names(args)
+            if not s_args:
+                return
+            elif len(s_args) > 1:
+                self.__error("Only one argument allowed: <REMOTE DIR>")
+                return
+
+            self.fe.md(s_args[0])
+        except IOError as e:
+            self.__error(str(e))
 
     def do_lls(self, args):
         """lls
@@ -451,7 +458,7 @@ class MpFileShell(cmd.Cmd):
 
         print(os.getcwd())
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_put(self, args):
         """put <LOCAL FILE> [<REMOTE FILE>]
         Upload local file. If the second parameter is given,
@@ -461,35 +468,34 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing arguments: <LOCAL FILE> [<REMOTE FILE>]")
+            return
 
-        elif self.__is_open():
+        s_args = self.__parse_file_names(args)
+        if not s_args:
+            return
+        elif len(s_args) > 2:
+            self.__error(
+                "Only one ore two arguments allowed: <LOCAL FILE> [<REMOTE FILE>]"
+            )
+            return
 
-            s_args = self.__parse_file_names(args)
-            if not s_args:
-                return
-            elif len(s_args) > 2:
-                self.__error(
-                    "Only one ore two arguments allowed: <LOCAL FILE> [<REMOTE FILE>]"
-                )
-                return
+        lfile_name = s_args[0]
 
-            lfile_name = s_args[0]
+        if len(s_args) > 1:
+            rfile_name = s_args[1]
+        else:
+            rfile_name = lfile_name
 
-            if len(s_args) > 1:
-                rfile_name = s_args[1]
-            else:
-                rfile_name = lfile_name
-
-            try:
-                self.fe.put(lfile_name, rfile_name)
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            self.fe.put(lfile_name, rfile_name)
+        except IOError as e:
+            self.__error(str(e))
 
     def complete_put(self, *args):
         files = [o for o in os.listdir(".") if os.path.isfile(os.path.join(".", o))]
         return [i for i in files if i.startswith(args[0])]
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_mput(self, args):
         """mput <SELECTION REGEX>
         Upload all local files that match the given regular expression.
@@ -500,15 +506,14 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <SELECTION REGEX>")
+            return
 
-        elif self.__is_open():
+        try:
+            self.fe.mput(os.getcwd(), args, True)
+        except IOError as e:
+            self.__error(str(e))
 
-            try:
-                self.fe.mput(os.getcwd(), args, True)
-            except IOError as e:
-                self.__error(str(e))
-
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_get(self, args):
         """get <REMOTE FILE> [<LOCAL FILE>]
         Download remote file. If the second parameter is given,
@@ -518,31 +523,30 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing arguments: <REMOTE FILE> [<LOCAL FILE>]")
+            return
 
-        elif self.__is_open():
+        s_args = self.__parse_file_names(args)
+        if not s_args:
+            return
+        elif len(s_args) > 2:
+            self.__error(
+                "Only one ore two arguments allowed: <REMOTE FILE> [<LOCAL FILE>]"
+            )
+            return
 
-            s_args = self.__parse_file_names(args)
-            if not s_args:
-                return
-            elif len(s_args) > 2:
-                self.__error(
-                    "Only one ore two arguments allowed: <REMOTE FILE> [<LOCAL FILE>]"
-                )
-                return
+        rfile_name = s_args[0]
 
-            rfile_name = s_args[0]
+        if len(s_args) > 1:
+            lfile_name = s_args[1]
+        else:
+            lfile_name = rfile_name
 
-            if len(s_args) > 1:
-                lfile_name = s_args[1]
-            else:
-                lfile_name = rfile_name
+        try:
+            self.fe.get(rfile_name, lfile_name)
+        except IOError as e:
+            self.__error(str(e))
 
-            try:
-                self.fe.get(rfile_name, lfile_name)
-            except IOError as e:
-                self.__error(str(e))
-
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_mget(self, args):
         """mget <SELECTION REGEX>
         Download all remote files that match the given regular expression.
@@ -553,13 +557,12 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <SELECTION REGEX>")
+            return
 
-        elif self.__is_open():
-
-            try:
-                self.fe.mget(os.getcwd(), args, True)
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            self.fe.mget(os.getcwd(), args, True)
+        except IOError as e:
+            self.__error(str(e))
 
     def complete_get(self, *args):
 
@@ -570,7 +573,7 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_rm(self, args):
         """rm <REMOTE FILE or DIR>
         Delete a remote file or directory.
@@ -580,23 +583,23 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <REMOTE FILE>")
-        elif self.__is_open():
+            return
 
-            s_args = self.__parse_file_names(args)
-            if not s_args:
-                return
-            elif len(s_args) > 1:
-                self.__error("Only one argument allowed: <REMOTE FILE>")
-                return
+        s_args = self.__parse_file_names(args)
+        if not s_args:
+            return
+        elif len(s_args) > 1:
+            self.__error("Only one argument allowed: <REMOTE FILE>")
+            return
 
-            try:
-                self.fe.rm(s_args[0])
-            except IOError as e:
-                self.__error(str(e))
-            except PyboardError:
-                self.__error("Unable to send request to %s" % self.fe.sysname)
+        try:
+            self.fe.rm(s_args[0])
+        except IOError as e:
+            self.__error(str(e))
+        except PyboardError:
+            self.__error("Unable to send request to %s" % self.fe.sysname)
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_mrm(self, args):
         """mrm <SELECTION REGEX>
         Delete all remote files that match the given regular expression.
@@ -606,13 +609,12 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <SELECTION REGEX>")
+            return
 
-        elif self.__is_open():
-
-            try:
-                self.fe.mrm(args, True)
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            self.fe.mrm(args, True)
+        except IOError as e:
+            self.__error(str(e))
 
     def complete_rm(self, *args):
 
@@ -623,7 +625,7 @@ class MpFileShell(cmd.Cmd):
 
         return [i for i in files if i.startswith(args[0])]
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_cat(self, args):
         """cat <REMOTE FILE>
         Print the contents of a remote file.
@@ -631,23 +633,23 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <REMOTE FILE>")
-        elif self.__is_open():
+            return
 
-            s_args = self.__parse_file_names(args)
-            if not s_args:
-                return
-            elif len(s_args) > 1:
-                self.__error("Only one argument allowed: <REMOTE FILE>")
-                return
+        s_args = self.__parse_file_names(args)
+        if not s_args:
+            return
+        elif len(s_args) > 1:
+            self.__error("Only one argument allowed: <REMOTE FILE>")
+            return
 
-            try:
-                print(self.fe.gets(s_args[0]))
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            print(self.fe.gets(s_args[0]))
+        except IOError as e:
+            self.__error(str(e))
 
     complete_cat = complete_get
 
-    @__unexpected_disconnection_handler
+    @__connection_guard
     def do_exec(self, args):
         """exec <STATEMENT>
         Execute a Python statement on remote.
@@ -659,21 +661,45 @@ class MpFileShell(cmd.Cmd):
 
         if not len(args):
             self.__error("Missing argument: <STATEMENT>")
-        elif self.__is_open():
+            return
 
-            try:
-                self.fe.exec_raw_no_follow(args + "\n")
-                ret = self.fe.follow(None, data_consumer)
+        sys.stdout.write("*** Break with Ctrl+C ***\n")
 
-                if len(ret[-1]):
-                    self.__error(ret[-1].decode("utf-8"))
+        # prepare an empty one to avoid potential exception
+        ret = [[]]
+        try:
+            self.fe.exec_raw_no_follow(args + "\n")
+            ret = self.fe.follow(None, data_consumer)
 
-            except IOError as e:
-                self.__error(str(e))
-            except PyboardError as e:
-                self.__error(str(e))
+        except KeyboardInterrupt as e:
+            # terminate the execution process
+            #self.__error("Terminate program due to user input!")
+            self.fe.exec_abort()
+            ret = self.fe.follow(None, data_consumer)
 
-    @__unexpected_disconnection_handler
+        except (IOError, PyboardError) as e:
+            self.__error(str(e))
+
+        finally:
+            if len(ret[-1]):
+                self.__error(ret[-1].decode("utf-8"))
+
+    @__connection_guard
+    def do_srst(self, args):
+        """softreset/srst
+        Soft reset the connected target (aka. reset REPL)."""
+
+        try:
+            self.fe.exec_raw_no_follow("\r\x03\x03\x04\x03\x03\r\n")
+            ret = self.fe.follow(1, lambda data: None)
+            if len(ret[-1]):
+                self.__error(ret[-1].decode("utf-8"))
+        except (IOError, PyboardError) as e:
+            pass
+
+    do_softreset = do_srst
+
+    @__connection_guard
     def do_repl(self, args):
         """repl
         Enter Micropython REPL.
@@ -689,53 +715,51 @@ class MpFileShell(cmd.Cmd):
             )
             return
 
-        if self.__is_open():
+        if self.repl is None:
 
-            if self.repl is None:
+            from mp.term import Term
 
-                from mp.term import Term
+            self.repl = Term(self.fe.con)
 
-                self.repl = Term(self.fe.con)
-
-                if platform.system() == "Windows":
-                    self.repl.exit_character = chr(0x11)
-                else:
-                    self.repl.exit_character = chr(0x1D)
-
-                self.repl.raw = True
-                self.repl.set_rx_encoding("UTF-8")
-                self.repl.set_tx_encoding("UTF-8")
-
+            if platform.system() == "Windows":
+                self.repl.exit_character = chr(0x11)
             else:
-                self.repl.serial = self.fe.con
+                self.repl.exit_character = chr(0x1D)
 
-            pwd = self.fe.pwd()
-            self.fe.teardown()
-            self.repl.start()
+            self.repl.raw = True
+            self.repl.set_rx_encoding("UTF-8")
+            self.repl.set_tx_encoding("UTF-8")
 
-            if self.repl.exit_character == chr(0x11):
-                print("\n*** Exit REPL with Ctrl+Q ***")
-            else:
-                print("\n*** Exit REPL with Ctrl+] ***")
+        else:
+            self.repl.serial = self.fe.con
 
-            try:
-                self.repl.join(True)
-            except Exception:
-                pass
+        pwd = self.fe.pwd()
+        self.fe.teardown()
+        self.repl.start()
 
-            self.repl.console.cleanup()
+        if self.repl.exit_character == chr(0x11):
+            print("\n*** Exit REPL with Ctrl+Q ***")
+        else:
+            print("\n*** Exit REPL with Ctrl+] ***")
 
-            if self.caching:
-                # Clear the file explorer cache so we can see any new files.
-                self.fe.cache = {}
+        try:
+            self.repl.join(True)
+        except Exception:
+            pass
 
-            self.fe.setup()
-            try:
-                self.fe.cd(pwd)
-            except RemoteIOError as e:
-                # Working directory does not exist anymore
-                self.__error(str(e))
-            print("")
+        self.repl.console.cleanup()
+
+        if self.caching:
+            # Clear the file explorer cache so we can see any new files.
+            self.fe.cache = {}
+
+        self.fe.setup()
+        try:
+            self.fe.cd(pwd)
+        except RemoteIOError as e:
+            # Working directory does not exist anymore
+            self.__error(str(e))
+        print("")
 
     def do_mpyc(self, args):
         """mpyc <LOCAL PYTHON FILE>
@@ -767,6 +791,7 @@ class MpFileShell(cmd.Cmd):
         ]
         return [i for i in files if i.startswith(args[0])]
 
+    @__connection_guard
     def do_putc(self, args):
         """mputc <LOCAL PYTHON FILE> [<REMOTE FILE>]
         Compile a Python file into byte-code by using mpy-cross (which needs to be in the
@@ -775,37 +800,37 @@ class MpFileShell(cmd.Cmd):
         """
         if not len(args):
             self.__error("Missing arguments: <LOCAL FILE> [<REMOTE FILE>]")
+            return
 
-        elif self.__is_open():
-            s_args = self.__parse_file_names(args)
-            if not s_args:
-                return
-            elif len(s_args) > 2:
-                self.__error(
-                    "Only one ore two arguments allowed: <LOCAL FILE> [<REMOTE FILE>]"
-                )
-                return
+        s_args = self.__parse_file_names(args)
+        if not s_args:
+            return
+        elif len(s_args) > 2:
+            self.__error(
+                "Only one ore two arguments allowed: <LOCAL FILE> [<REMOTE FILE>]"
+            )
+            return
 
-            lfile_name = s_args[0]
+        lfile_name = s_args[0]
 
-            if len(s_args) > 1:
-                rfile_name = s_args[1]
-            else:
-                rfile_name = (
-                    lfile_name[: lfile_name.rfind(".")]
-                    if "." in lfile_name
-                    else lfile_name
-                ) + ".mpy"
+        if len(s_args) > 1:
+            rfile_name = s_args[1]
+        else:
+            rfile_name = (
+                lfile_name[: lfile_name.rfind(".")]
+                if "." in lfile_name
+                else lfile_name
+            ) + ".mpy"
 
-            _, tmp = tempfile.mkstemp()
+        _, tmp = tempfile.mkstemp()
 
-            try:
-                self.fe.mpy_cross(src=lfile_name, dst=tmp)
-                self.fe.put(tmp, rfile_name)
-            except IOError as e:
-                self.__error(str(e))
+        try:
+            self.fe.mpy_cross(src=lfile_name, dst=tmp)
+            self.fe.put(tmp, rfile_name)
+        except IOError as e:
+            self.__error(str(e))
 
-            os.unlink(tmp)
+        os.unlink(tmp)
 
     complete_putc = complete_mpyc
 
